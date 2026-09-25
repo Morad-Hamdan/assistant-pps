@@ -1,0 +1,434 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                     ASSISTANT  —  Documentation Technique                    ║
+║              Application décisionnelle de gestion des PPS                    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  Auteur  : Projet PFE
+  Stack   : FastAPI (Python) / Laravel (PHP) / SQLite / Chart.js / Tailwind CSS
+  Ports   : API sur :8000  —  Interface web sur :8080
+  Accès   : http://192.168.0.139:8080  (partageable sur le réseau local)
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        1. PRÉSENTATION GÉNÉRALE                             ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  L'application "Assistant" est un système décisionnel interactif destiné à la
+  gestion et au suivi des PPS (Permis de Pilotage de Subtracteurs) des employés
+  d'une unité de production. Elle permet :
+
+    — La consultation en temps réel des statuts PPS par employé
+    — Le classement et l'analyse des PPS par statut (valide, à requalifier,
+      prévu à suspendre, en cours, suspendu)
+    — La détection automatisée des alertes (PPS suspendus) et surveillances
+      (PPS à requalifier ou prévus à suspendre)
+    — Une interface de chat conversationnel pour interroger la base en
+      langage naturel via un moteur d'intention (sans IA)
+    — L'authentification différenciée (administrateur / employé)
+    — Le partage sur le réseau local pour un accès multi-utilisateurs
+
+  Technologies employées :
+
+    Backend API  →  FastAPI (Python 3.12) sur uvicorn
+    Interface    →  Laravel 11 (PHP 8.3.31) avec Blade Templating
+    Base de données  →  SQLite (fichier hr_database.db pour les métiers,
+                        database.sqlite pour les utilisateurs Laravel)
+    Graphiques   →  Chart.js (donut, barres, barres horizontales)
+    Styles       →  Tailwind CSS (CDN), thème dark cyberpunk personnalisé
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        2. ARCHITECTURE DU PROJET                            ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  GEMINIE/
+  │
+  ├── start_assistant.bat       ← Lancement des deux serveurs (un clic)
+  ├── inspect_excel.py
+  │
+  └── ai_assistant/              ← Dossier racine de l'application
+      │
+      ├── DOCUMENTATION.txt      ← Ce fichier
+      ├── ARCHITECTURE.md        ← Schéma d'architecture
+      ├── requirements.txt       ← Dépendances Python
+      │
+      ├── backend/               ← API REST (FastAPI)
+      │   ├── main.py            ← Point d'entrée FastAPI (montage routes + CORS)
+      │   │
+      │   ├── core/
+      │   │   └── config.py      ← Configuration (SQLITE_PATH, etc.)
+      │   │
+      │   ├── api/routes/
+      │   │   ├── employee.py    ← GET /api/employee/analyze et /meta
+      │   │   ├── ai.py          ← POST /ask (intention + réponse)
+      │   │   └── health.py      ← GET /health
+      │   │
+      │   ├── services/
+      │   │   ├── database.py    ← Couche SQLite : build_employee_dataset()
+      │   │   ├── employee_service.py ← analyze_employees(), get_meta_data()
+      │   │   ├── ai_service.py  ← Moteur de réponse "direct" (8+ intentions)
+      │   │   └── qualification_engine.py  ← Normalisation texte
+      │   │
+      │   ├── engines/
+      │   │   ├── intent_engine.py   ← Détection d'intention par mots-clés
+      │   │   └── context_engine.py  ← Contexte de session (dernier employé)
+      │   │
+      │   ├── schemas/
+      │   │   └── ai_schema.py   ← Schémas Pydantic (AskRequest, AskResponse)
+      │   │
+      │   ├── governance/
+      │   │   └── logger.py      ← Journalisation des questions (audit_log.csv)
+      │   │
+      │   ├── scripts/
+      │   │   └── migrate_excel_to_sqlite.py  ← Import Excel → SQLite
+      │   │
+      │   └── data/
+      │       ├── recap.xlsx           ← Fichier source (modifications manuelles)
+      │       ├── hr_database.db       ← Base SQLite métier (runtime)
+      │       └── refresh_Excel_sqlite.bat   ← Synchronisation Excel → SQLite
+      │
+      ├── laravel/                ← Interface web (Laravel 11)
+      │   ├── routes/web.php      ← Routes : login, dashboard, employés, PPS, chat
+      │   │
+      │   ├── app/Http/Controllers/
+      │   │   ├── NexusController.php  ← Dashboard, Employés, PPS, Chat
+      │   │   └── AuthController.php   ← Login (par nom) + Logout
+      │   │
+      │   ├── app/Http/Middleware/
+      │   │   └── CheckRole.php   ← Middleware 'role' (admin / employee)
+      │   │
+      │   ├── app/Models/
+      │   │   └── User.php        ← Modèle avec champs name, role, password
+      │   │
+      │   ├── database/migrations/
+      │   │   ├── 0001_01_01_000000_create_users_table.php
+      │   │   ├── 2026_06_17_060138_add_role_to_users_table.php
+      │   │   └── (sessions, cache, etc.)
+      │   │
+      │   ├── database/seeders/
+      │   │   └── DatabaseSeeder.php  ← Seed ADMIN et MKTANGER
+      │   │
+      │   ├── resources/views/
+      │   │   ├── layouts/
+      │   │   │   └── app.blade.php   ← Layout global + sidebar responsive
+      │   │   ├── auth/
+      │   │   │   └── login.blade.php ← Page de connexion
+      │   │   └── pages/
+      │   │       ├── dashboard.blade.php   ← Tableau de bord
+      │   │       ├── employees.blade.php   ← Liste employés
+      │   │       ├── employee.blade.php    ← Détail employé
+      │   │       ├── pps.blade.php         ← Analyse PPS (3 onglets)
+      │   │       └── chat.blade.php        ← Chat conversationnel
+      │   │
+      │   └── .env               ← Configuration : APP_URL, FASTAPI_URL, DB
+      │
+      └── venv/                  ← Environnement virtuel Python
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        3. MODÈLE DE DONNÉES                                 ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  3.1  Source primaire
+
+    Les données proviennent du fichier recap.xlsx (154 employés, 28 colonnes PPS).
+    Chaque cellule contient soit une date (jj/mm/aaaa), soit la valeur "EC" (En
+    Cours de certification), soit une cellule vide.
+
+  3.2  Base de données SQLite (hr_database.db)
+
+    Deux tables :
+
+      employees (id, matricule, nom, prenom, processus, uap, eap)
+      pps_assignments (id, employee_id, pps_name, date_debut_validite, statut, raw_value)
+
+    Migration depuis Excel via :  backend/scripts/migrate_excel_to_sqlite.py
+
+  3.3  Statuts PPS
+
+    La fonction build_employee_dataset() (database.py) calcule le statut de chaque
+    PPS selon l'écart entre la date de début de validité et la date du jour :
+
+      Valeur de la cellule   →  Statut
+      ─────────────────────────────────────────────────────
+      "EC" (en cours)        →  EN COURS           [>]
+      Date < 2,75 ans        →  VALIDE             [OK]
+      2,75 à 2,96 ans        →  À REQUALIFIER      [!]
+      2,96 à 3 ans           →  PRÉVU À SUSPENDRE  [~]
+      > 3 ans                →  SUSPENDU           [X]
+      Vide ou non interprété →  NON APPLICABLE
+
+  3.4  Champs de sortie (dataset employé)
+
+    Chaque employé dans le dataset retourné par l'API contient :
+
+      Champs scalaires :
+        matricule, name, processus, uap, eap
+        valid, requalify, prevu, en_cours, suspended, not_applicable (compteurs)
+        strict_score (%)        = valides / total applicables
+        operational_score (%)   = (valides + requalifier + prevu) / total
+        risk                    = "ALERTE" | "SURVEILLANCE" | ""
+        global_status           = "valid" | "requalify" | "suspended"
+
+      Listes de PPS (noms uniquement) :
+        valid_pps, requalify_pps, prevu_pps, en_cours_pps, suspended_pps
+
+      Listes avec dates de validation (pour affichage) :
+        suspended_pps_dates     = [ { pps, date }, ... ]
+        prevu_pps_dates         = [ { pps, date }, ... ]
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        4. AUTHENTIFICATION ET RÔLES                         ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  4.1  Principe
+
+    L'authentification est gérée par Laravel (AuthController + middleware CheckRole).
+    La connexion s'effectue par nom d'utilisateur (et non par email) et mot de passe.
+    Deux rôles sont définis : admin et employee.
+
+  4.2  Comptes pré-définis (seeder)
+
+    ┌───────────────────┬──────────┬────────────┬──────────┐
+    │ Nom              │ Email                   │ Rôle     │ Mot de passe │
+    ├───────────────────┼──────────┼────────────┼──────────┤
+    │ ADMIN            │ admin@assistant.com     │ admin    │ MK2026       │
+    │ MKTANGER         │ employee@assistant.com  │ employee │ MK2026       │
+    └───────────────────┴──────────┴────────────┴──────────┘
+
+  4.3  Règles d'accès
+
+    ┌──────────────────┬──────────────────────────────────────┐
+    │ Page             │ Accès                                │
+    ├──────────────────┼──────────────────────────────────────┤
+    │ /login           │ Public                               │
+    │ /                │ Admin uniquement                     │
+    │ /employees       │ Admin + Employee                     │
+    │ /pps             │ Admin uniquement                     │
+    │ /chat            │ Admin uniquement                     │
+    └──────────────────┴──────────────────────────────────────┘
+
+    L'administrateur voit toutes les pages et la sidebar complète.
+    L'employé voit uniquement la page Employés (liste + détail).
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        5. FONCTIONNEMENT PAR PAGE                           ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  5.1  Dashboard (/)
+
+    — 5 cartes statistiques (Valides, À requalifier, Prévus, En cours, Suspendus)
+    — Graphique donut de distribution des PPS
+    — Carte Alertes : nombre d'employés avec au moins un PPS suspendu
+    — Résumé : nombre total d'employés dans la base
+    — Tableau "Employés avec PPS suspendus" avec nom, matricule, PPS et date
+      de validation (format jj/mm/aaaa)
+    — Tableau "Aperçu des PPS" : chaque PPS avec effectifs par statut
+
+  5.2  Employés (/employees)
+
+    — Barre de recherche par nom ou matricule avec filtrage instantané
+    — Tableau complet : matricule, nom, processus, UAP, alerte, compteurs PPS
+    — Onglets : "Tous" et "Non qualifiés" (admin seulement)
+    — Total : nombre d'employés affiché sous le titre
+    — Chaque matricule est un lien vers le détail employé
+
+  5.3  Détail Employé (/employees/{matricule})
+
+    — Carte d'identité : nom, matricule, processus, UAP, badge d'alerte
+    — 5 compteurs PPS (stat cards)
+    — Sections détaillées par statut (Suspendus, À requalifier, Prévus,
+      En cours, Valides) avec PPS et date de validation (format jj/mm/aaaa)
+      pour les statuts suspendus et prévus
+
+  5.4  Analyse PPS (/pps) — 3 onglets
+
+    Onglet 1 — Graphiques :
+      — 5 cartes statistiques cliquables (filtrent le tableau de la Liste PPS)
+      — Donut de répartition des PPS (clic → filtre)
+      — Barres des statuts (clic → filtre)
+      — Panneau de détail PPS avec liste des employés par statut
+
+    Onglet 2 — Liste PPS :
+      — 5 cartes statistiques cliquables
+      — Barre de recherche par nom de PPS
+      — Tableau complet : nom PPS, effectifs par statut, total
+      — Clic sur un PPS → panneau détail avec stats et liste employés
+
+    Onglet 3 — Classement :
+      — Graphique à barres horizontales des PPS triés par valides
+      — Nombre de valides sur chaque barre
+
+  5.5  Chat (/chat)
+
+    — Interface conversationnelle avec suggestions (7 boutons prédéfinis)
+    — Moteur d'intention par mots-clés (sans IA, réponse < 1 seconde)
+    — 8+ intentions reconnues :
+        • "Resume"          → stats globales
+        • "Critique"        → employés avec PPS bloqués
+        • "Employes suspendus" → liste employés suspendus
+        • "PPS suspendus"   → liste PPS bloqués
+        • "A requalifier"   → employés à requalifier
+        • "Prevu"           → PPS prévus à suspendre (15 jours)
+        • "Apercu PPS"      → stats détaillées PPS
+        • Nom/Matricule     → recherche employé
+        • "PPS 009"         → analyse d'un PPS spécifique
+    — Contexte de session (souvient du dernier employé consulté)
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        6. SYSTÈME D'ALERTES (EX-RISQUES)                    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  Le système remplace les niveaux de risque (HIGH/MEDIUM/LOW) par des statuts
+  plus explicites adaptés au contexte industriel :
+
+    ┌──────────────────┬────────────────────────────────────────────────────┐
+    │ Statut           │ Condition                                          │
+    ├──────────────────┼────────────────────────────────────────────────────┤
+    │ ALERTE (rouge)   │ Au moins 1 PPS suspendu (dépassement > 3 ans)     │
+    │ SURVEILLANCE     │ Au moins 1 PPS à requalifier ou prévu à suspendre │
+    │   (orange)       │                                                    │
+    │ — (aucun)        │ Tous les PPS sont valides ou non applicables      │
+    └──────────────────┴────────────────────────────────────────────────────┘
+
+  Les badges "ALERTE" et "SURVEILLANCE" apparaissent :
+    — Dans le tableau Employés (colonne Alerte)
+    — Sur la carte de détail de chaque employé
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        7. API REST (FASTAPI)                                ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  Endpoint                     │ Méthode │ Description
+  ─────────────────────────────┼─────────┼────────────────────────────────────
+  /api/employee/analyze        │ GET     │ Retourne le dataset complet
+                               │         │ (154 employés avec tous les champs)
+  /api/employee/meta           │ GET     │ Métadonnées : nombre employés,
+                               │         │ colonnes, distribution statuts
+  /api/employee/pps?name=      │ GET     │ Recherche de PPS par nom
+  /ask                         │ POST    │ Question → {intent, answer, data}
+  /health                      │ GET     │ Vérification du service
+
+  POST /ask  — Corps de la requête :
+    { "question": "texte", "history": [{"role":"user","content":"..."}, ...] }
+
+  POST /ask  — Réponse :
+    { "question": "...", "intent": "...", "confidence": 0.95,
+      "reason": "...", "route": "direct",
+      "answer": "texte formaté", "data": [...] }
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        8. DÉPLOIEMENT ET LANCEMENT                         ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  8.1  Prérequis
+
+    — Python 3.12
+    — PHP 8.3.31 (via Winget)
+    — Composer (gestionnaire de dépendances PHP)
+    — Node.js (optionnel, pour les assets Laravel)
+
+    Bibliothèques Python (requirements.txt) :
+      fastapi, uvicorn, pandas, numpy, requests, openpyxl, pydantic
+
+  8.2  Lancement (méthode recommandée)
+
+    Double-clic sur le fichier :  Assistant_PPS_App/start_assistant.bat
+
+    Ce fichier exécute séquentiellement :
+      1. uvicorn backend.main:app --reload --port 8000 --host 0.0.0.0
+         (API FastAPI sur le port 8000)
+      2. php artisan serve --host=0.0.0.0 --port=8080
+         (Interface Laravel sur le port 8080)
+      3. Ouvre le navigateur à l'adresse http://192.168.0.139:8080
+
+    Pour arrêter : appuyer sur une touche dans la fenêtre du batch.
+
+  8.3  Partage sur le réseau local
+
+    L'API et l'interface bindent sur 0.0.0.0, ce qui les rend accessibles
+    depuis n'importe quel PC du même réseau. Les autres utilisateurs
+    doivent simplement ouvrir dans leur navigateur :
+      http://192.168.0.139:8080
+    (remplacer l'IP par celle de la machine serveuse)
+
+    Attention : le pare-feu Windows doit autoriser les ports 8000 et 8080.
+
+  8.4  Mise à jour des données
+
+    Après modification manuelle du fichier recap.xlsx :
+      1. Double-clic sur : backend/data/refresh_Excel_sqlite.bat
+       2. Relancer start_assistant.bat
+
+    Le script vide la base SQLite et réimporte toutes les données
+    depuis le fichier Excel.
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        9. INTERFACE MOBILE                                  ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  L'interface est adaptée aux écrans de smartphones (responsive design) :
+
+    — Sidebar : masquée par défaut sur mobile, ouverte via un bouton
+      hamburger (☰) fixé en haut à gauche ; fond semi-transparent superposé
+    — Fermeture automatique de la sidebar après sélection d'un lien
+    — Grilles : les 5 colonnes de statistiques passent à 2 colonnes
+      sur mobile (classes grid-cols-2 md:grid-cols-5)
+    — Tableaux : défilement horizontal (overflow-x-auto) pour les écrans
+      étroits
+    — Cartes : padding réduit sur mobile (p-3 vs p-4)
+    — Meta viewport configuré (width=device-width, initial-scale=1.0)
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        10. BONNES PRATIQUES                                 ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+    — Toute l'interface est en français
+    — Les dates s'affichent au format jj/mm/aaaa
+    — Colonne "Date de Validation" présente pour les statuts suspendus et
+      prévus dans le tableau du Dashboard et le détail employé
+    — Cinq icônes de statut unifiées : [OK] [!] [~] [>] [X]
+    — Le chat utilise un moteur d'intention (sans IA, < 1s)
+    — La recherche d'employés ignore les accents (normalisation NFKD → ASCII)
+    — Les compteurs et badges offrent un repérage visuel immédiat
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        11. HISTORIQUE DES ÉVOLUTIONS                        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  Version 1.0 (finale)
+    — Ajout des dates de validation (jj/mm/aaaa) pour PPS suspendus et prévus
+    — Renommage "Date debut validite" → "Date de Validation"
+    — Interface mobile (responsive) avec hamburger menu
+    — Partage réseau : bind 0.0.0.0, APP_URL = IP locale
+    — Documentation et présentation complètes
+
+  Version 0.9
+    — Authentification par nom d'utilisateur (rôles admin/employee)
+    — Renommage complet "Nexus" → "Assistant"
+    — Système d'alertes ALERTE / SURVEILLANCE (ex-risques)
+    — Dashboard avec graphiques Chart.js
+    — Page PPS avec 3 onglets (Graphiques / Liste / Classement)
+    — Page Employés avec filtre "Non qualifiés"
+    — Sidebar conditionnelle selon le rôle
+
+  Version 0.5
+    — Suppression d'Ollama (route "direct" uniquement)
+    — Première version Laravel (migration depuis le frontend statique)
+    — Backend FastAPI existant (moteur d'intention, SQLite, Excel)
+
+  Version 0.1
+    — Prototype initial : FastAPI + Ollama, frontend statique HTML/CSS/JS
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    FIN DE LA DOCUMENTATION                                   ║
+╚══════════════════════════════════════════════════════════════════════════════╝

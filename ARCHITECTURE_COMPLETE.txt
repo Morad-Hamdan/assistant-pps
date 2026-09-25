@@ -1,0 +1,890 @@
+================================================================================
+                    ARCHITECTURE COMPLETE DU PROJET ASSISTANT PPS
+                        Guide p├®dagogique ├®tape par ├®tape
+================================================================================
+
+ATTENTION : Ce fichier utilise des caract├¿res accentu├®s (UTF-8).
+Ouvrez-le avec Notepad++ ou VS Code pour un affichage correct.
+Si vous voyez des symboles ├®tranges, changez l'encodage en UTF-8.
+
+Auteur  : Ing├®nierie logicielle
+Projet  : Assistant d├®cisionnel PPS (Pratiques Professionnelles S├®curit├®)
+Stack   : FastAPI (Python 3.12) + Laravel 11 (PHP 8.3) + SQLite + Excel
+Public  : Ce document est r├®dig├® pour un ├®tudiant en g├®nie logiciel qui veut
+          comprendre comment ce projet a ├®t├® con├¦u, pourquoi telle architecture,
+          et comment reproduire le m├¬me type d'application.
+
+
+================================================================================
+TABLE DES MATI├łRES
+================================================================================
+1.  Pr├®sentation du projet
+2.  Pourquoi cette architecture ? (FastAPI + Laravel + SQLite)
+2b. Diff├®rences PHP vs Python (dans ce projet)
+3.  Structure des dossiers
+4.  Les scripts batch (d├®ploiement 1-clic)
+5.  Backend Python en d├®tail (tous les fichiers .py)
+    5.1  core/config.py          - Configuration centralis├®e
+    5.2  services/database.py     - Le c┼"ur m├®tier (BDD + dataset)
+    5.3  services/qualification_engine.py - Normalisation texte
+    5.4  services/employee_service.py     - Couche service
+    5.5  api/routes/employee.py   - Endpoints API REST
+    5.6  api/routes/health.py     - Health check
+    5.7  main.py                  - Point d'entr├®e FastAPI
+    5.8  scripts/migrate_excel_to_sqlite.py - Migration Excel vers SQLite
+6.  Frontend Laravel en d├®tail
+    6.1  Routes (web.php)
+    6.2  Controllers (NexusController, AuthController)
+    6.3  Middleware (CheckRole)
+    6.4  Models (User)
+    6.5  Seeders (DatabaseSeeder)
+    6.6  Vues Blade (app, login, dashboard, employees, employee, pps)
+7.  Logique m├®tier : le calcul des statuts PPS
+8.  Cycle de vie complet des donn├®es (Excel -> SQLite -> API -> Navigateur)
+9.  Concepts cl├®s ├  retenir
+
+
+================================================================================
+1.  PR├ëSENTATION DU PROJET
+================================================================================
+
+L'Assistant PPS est une application web de pilotage RH qui permet de :
+
+  - Lire un fichier Excel (recap.xlsx) contenant la liste des employ├®s et leurs
+    certifications PPS (Pratiques Professionnelles S├®curit├®)
+  - Migrer ces donn├®es dans une base SQLite
+  - Calculer automatiquement le statut de chaque certification PPS :
+      * VALIDE   : date de moins de 2,75 ans
+      * A REQUALIFIER : date entre 2,75 et < 2,9589 ans
+      * PREVU    : date entre 2,9589 et 3 ans
+      * SUSPENDU : date de plus de 3 ans
+      * EN COURS : pas de date mais valeur "EC" dans l'Excel
+      * NON APPLICABLE : pas de date du tout
+  - Visualiser ces donn├®es via un tableau de bord interactif
+  - Filtrer, chercher, explorer les employ├®s et leurs PPS
+  - Authentifier les utilisateurs (admin / employee)
+
+Exemple de r├©gle m├®tier :
+  Un employ├® a pass├® son PPS "Soudure" le 22/03/2018.
+  Aujourd'hui, cela fait plus de 3 ans. Le statut est donc "suspendu".
+  Si la case Excel contient "VALIDE" mais la date est ancienne, l'application
+  d├®tecte une incoh├®rence et l'enregistre dans le rapport de correction.
+
+C'est un syst├©me 100% r├©gles-m├®tier (pas d'IA, pas de LLM). Toute la logique
+est dans le fichier migrate_excel_to_sqlite.py avec la fonction compute_statut().
+
+
+================================================================================
+2.  POURQUOI CETTE ARCHITECTURE ?
+================================================================================
+
+L'architecture choisie est une architecture 3-tiers avec s├®paration front/back :
+
+    ┌─────────────┐     HTTP      ┌──────────────┐     SQL     ┌──────────┐
+    │  Laravel 11  │ ──────────>  │  FastAPI      │ ─────────>  │ SQLite   │
+    │  (PHP 8.3)   │ <──────────  │  (Python 3.12)│ <─────────  │ (fichier)│
+    │  Frontend    │    JSON      │  API REST     │   sqlite3   │          │
+    │  port 8080   │              │  port 8000    │             │ .db file │
+    └─────────────┘              └──────────────┘             └──────────┘
+                                           ^
+                                           │ pandas/openpyxl
+                                           v
+                                      ┌──────────┐
+                                      │ recap.xlsx│
+                                      │ (Excel)   │
+                                      └──────────┘
+
+Pourquoi FastAPI + Laravel et pas un seul langage ?
+----------------------------------------------------
+1. FASTAPI (Python) :
+   - Excellente biblioth├¿que Pandas pour lire les Excel (.xlsx)
+   - openpyxl pour manipuler les cellules Excel
+   - sqlite3 (int├®gr├® ├  Python) pour la base SQLite
+   - Syntaxe claire pour les API REST
+   - Parfait pour la couche donn├®es + logique m├®tier
+
+2. LARAVEL (PHP) :
+   - Moteur de templating Blade puissant (vues HTML)
+   - Syst├¿me d'authentification int├®gr├® (Auth::attempt, sessions)
+   - Middleware pour la s├®curit├® (CheckRole)
+   - Syst├¿me de migrations et seeders pour la base utilisateurs
+   - Excellent pour le rendu HTML / dashboard
+
+3. SQLITE :
+   - Pas besoin d'installer un serveur de base de donn├®es
+   - Un seul fichier .db, facile ├  transporter
+   - Suffisant pour un volume de donn├®es RH (quelques centaines d'employ├®s)
+
+4. Pourquoi pas un framework full-stack unique ?
+   - Laravel seul : lecture Excel compliqu├®e (pas de pandas)
+   - Python seul (Django/Flask) : pas de Blade, pas d'auth int├®gr├®e aussi simple
+   - Avec cette s├®paration, chaque langage fait ce qu'il fait de mieux
+
+C'est ce qu'on appelle une architecture "d├®coupl├®e" : on peut changer le
+frontend sans toucher au backend, et vice-versa.
+
+
+================================================================================
+2b.  DIFF├ëRENCES PHP vs PYTHON (dans ce projet)
+================================================================================
+
+Beaucoup d'├®tudiants confondent les r├┤les de PHP et Python. Voici les
+diff├®rences concr├¿tes dans ce projet, pour que ce soit clair :
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    PHP (Laravel)          |    Python (FastAPI)              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ R├┤le        : Interface utilisateur      |    Logique m├®tier + donn├®es    │
+│ Langage     : PHP 8.3                     |    Python 3.12                   │
+│ Framework   : Laravel 11                  |    FastAPI                       │
+│ Port        : 8080                        |    8000                          │
+│ Base        : SQLite Laravel (users)      |    SQLite m├®tier (employ├®s+PPS)│
+│ T├óche       : Afficher des pages HTML     |    Lire l'Excel, calculer       │
+│               G├®rer l'auth               |    Exposer une API REST          │
+│               Appeler l'API FastAPI       |    Interroger la base SQLite     │
+│ Sessions    : Int├®gr├®es (laravel)        |    Aucune (stateless)            │
+│ S├®curit├®   : Middleware + Auth           |    CORS uniquement               │
+│ D├®marrage   : php artisan serve           |    uvicorn backend.main:app     │
+│ D├®pendances : Composer (composer.json)    |    pip (requirements.txt)       │
+│ Fichier cl├® : routes/web.php              |    main.py                      │
+│ Format       : G├®n├¿re du HTML (Blade)     |    Retourne du JSON             │
+│ Donn├®es      : Re├ºoit du JSON de FastAPI  |    Lit l'Excel avec Pandas     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+LES POINTS CL├ëS DE LA DIFF├ëRENCE :
+
+1. PHP est fait pour le WEB (rendu HTML, sessions, formulaires)
+   - Il excelle ├á g├®n├®rer des pages HTML dynamiques
+   - Son syst├¿me de templating (Blade) est tr├¿s puissant
+   - L'authentification est int├®gr├®e (Auth::attempt, sessions)
+   - Les middlewares sont faciles ├á cr├®er
+
+2. Python est fait pour le TRAITEMENT DE DONN├ëES
+   - Pandas lit n'importe quel fichier (Excel, CSV, JSON) en 1 ligne
+   - numpy fait des calculs math├®matiques rapides
+   - FastAPI g├®n├¿re automatiquement la documentation (/docs)
+   - La syntaxe est concise pour la manipulation de donn├®es
+
+EXEMPLE CONCRET :
+
+   En PHP (Laravel) pour faire une requ├¬te HTTP ├á une API :
+       $response = Http::get("http://localhost:8000/api/data");
+       $data = $response->json();
+
+   En Python (FastAPI) pour lire un Excel :
+       df = pd.read_excel("recap.xlsx")
+       df["Date"] = pd.to_datetime(df["Date"])
+
+   Chaque langage fait ce qu'il fait le mieux.
+
+POURQUOI NE PAS TOUT FAIRE DANS UN SEUL LANGAGE ?
+
+   - Si on utilisait SEULEMENT Laravel :
+       -> Lire un Excel n├®cessite PhpSpreadsheet (plus lourd que Pandas)
+       -> Pas d'├®quivalent de FastAPI pour les API
+       -> Les calculs sur les dates sont plus verbeux
+
+   - Si on utilisait SEULEMENT Python :
+       -> Il faudrait un framework comme Django pour l'auth et les sessions
+       -> Django n'a pas de Blade (mot de templating aussi souple)
+       -> Le rendu HTML est moins ├®l├®gant qu'avec Blade
+
+   - Avec les DEUX :
+       -> Chaque langage fait 50% du travail
+       -> On peut d├®velopper et tester chaque partie s├®par├®ment
+       -> Si demain on veut un frontend React, on garde le m├¬me backend
+       -> Si demain on change de base de donn├®es, on touche pas au frontend
+
+C'est ce qu'on appelle le "polyglot programming" (programmation multilingue).
+Ce n'est pas plus compliqu├®, c'est plus intelligent : on utilise les bons
+outils pour chaque t├óche.
+
+
+================================================================================
+3.  STRUCTURE DES DOSSIERS
+================================================================================
+
+GEMINIE/                          <-- Dossier racine (projet complet)
+│
+├── ai_assistant/                 <-- Application principale
+│   ├── backend/                  <─── Backend Python (FastAPI)
+│   │   ├── api/
+│   │   │   └── routes/
+│   │   │       ├── employee.py   <── Endpoints /api/employee/*
+│   │   │       └── health.py     <── Endpoint /health
+│   │   ├── core/
+│   │   │   └── config.py         <── Chemins des fichiers (Excel, SQLite)
+│   │   ├── data/
+│   │   │   ├── recap.xlsx        <── Fichier Excel source (donn├®es RH)
+│   │   │   ├── hr_database.db    <── Base SQLite g├®n├®r├®e
+│   │   │   ├── refresh_Excel_sqlite.bat
+│   │   │   ├── rapport_correction_pps.md
+│   │   │   └── rapport_correction_pps.txt
+│   │   ├── scripts/
+│   │   │   └── migrate_excel_to_sqlite.py  <── Migration Excel -> SQLite
+│   │   ├── services/
+│   │   │   ├── database.py         <── C┼"ur m├®tier (CRUD, dataset, meta)
+│   │   │   ├── employee_service.py <── Couche service (appelle database)
+│   │   │   └── qualification_engine.py <── Normalisation texte (NFKD)
+│   │   ├── main.py                 <── Point d'entr├®e FastAPI
+│   │   └── requirements.txt        <── D├®pendances Python
+│   │
+│   ├── laravel/                    <─── Frontend Laravel (PHP)
+│   │   ├── app/
+│   │   │   ├── Http/
+│   │   │   │   ├── Controllers/
+│   │   │   │   │   ├── AuthController.php   <── Login / Logout
+│   │   │   │   │   └── NexusController.php  <── Dashboard, employ├®s, PPS
+│   │   │   │   └── Middleware/
+│   │   │   │       └── CheckRole.php        <── V├®rification r├┤le (admin/employee)
+│   │   │   ├── Models/
+│   │   │   │   └── User.php                 <── Mod├¿le utilisateur (name, password, role)
+│   │   │   └── Providers/...
+│   │   ├── database/
+│   │   │   ├── migrations/                  <── Tables SQLite Laravel (users, cache, etc.)
+│   │   │   ├── database.sqlite              <── Base utilisateurs Laravel
+│   │   │   └── seeders/
+│   │   │       ├── DatabaseSeeder.php       <── Cr├®ation des 2 utilisateurs
+│   │   │       └── reset_users.bat          <── Script reset users (migrate:fresh --seed)
+│   │   ├── resources/views/
+│   │   │   ├── auth/
+│   │   │   │   └── login.blade.php          <── Page de connexion
+│   │   │   ├── layouts/
+│   │   │   │   └── app.blade.php            <── Layout g├®n├®ral (sidebar, header)
+│   │   │   └── pages/
+│   │   │       ├── dashboard.blade.php      <── Tableau de bord principal
+│   │   │       ├── employees.blade.php      <── Liste des employ├®s
+│   │   │       ├── employee.blade.php       <── D├®tail d'un employ├®
+│   │   │       └── pps.blade.php            <── Suivi des PPS (graphiques)
+│   │   ├── routes/
+│   │   │   └── web.php                      <── D├®finition des routes
+│   │   ├── .env                             <── Configuration (FASTAPI_URL, DB)
+│   │   └── composer.json
+│   │
+│   ├── venv/                                <── Environnement virtuel Python
+│   ├── backend/data/refresh_Excel_sqlite.bat
+│   └── laravel/database/seeders/reset_users.bat
+│
+├── Assistant_PPS_App/             <── Package de d├®ploiement (copie pr├¬te ├  zipper)
+│   (m├¬me structure que ai_assistant/ mais nettoy├®e, 2.53 Mo)
+│
+├── install.bat                    <── Installation 1-clic (winget, venv, composer)
+├── setup_env.bat                  <── Si PHP/Python d├®j├  install├®s
+├── lancer_morad.bat               <── Lancement quotidien (auto-d├®tection IP)
+├── refresh_Excel_sqlite.bat       <── Synchro Excel -> SQLite
+├── reset_users.bat                <── Reset utilisateurs (migrate:fresh --seed)
+├── PRESENTATION.md                <── Documentation pr├®sentation projet
+├── DEPLOYER.md                    <── Guide de d├®ploiement
+└── ARCHITECTURE_COMPLETE.txt      <── CE FICHIER
+
+
+================================================================================
+4.  LES SCRIPTS BATCH (D├ëPLOIEMENT 1-CLIC)
+================================================================================
+
+Les scripts .bat sont le ciment du projet. Ils automatisent toute l'installation
+et le lancement sur Windows. C'est ce qui rend l'application "1-clic".
+
+──── 4.1 install.bat ───────────────────────────────────────────────────────────
+
+R├┤le : Installation compl├¿te depuis z├®ro sur un PC Windows vierge.
+
+├ëtapes :
+  1. V├®rifie si PHP 8.3 est install├® ; sinon le t├®l├®charge via winget
+     (winget = Windows Package Manager, comme apt-get sous Linux)
+  2. V├®rifie si Python 3.12 est install├® ; sinon winget
+  3. Cr├®e l'environnement virtuel Python (venv/) et installe les packages
+     (fastapi, uvicorn, pandas, numpy, openpyxl, etc.)
+  4. V├®rifie Composer (install├® ou t├®l├®charg├® dans laravel/)
+  5. Lance composer install pour les d├®pendances Laravel
+  6. G├®n├©re la cl├® APP_KEY (n├®cessaire pour les sessions Laravel)
+  7. Cr├®e la base SQLite Laravel et ex├®cute les migrations + seeders
+
+Concept important : le "seed" cr├®e les 2 utilisateurs (ADMIN et MKTANGER).
+La migration cr├®e les tables (users, sessions, cache, etc.).
+
+──── 4.2 setup_env.bat ─────────────────────────────────────────────────────────
+
+R├┤le : Identique ├  install.bat mais sans winget. Pour les PC o├╣ PHP et Python
+       sont d├®j├  install├®s. ├ëtapes 3 ├  7 uniquement.
+
+──── 4.3 lancer_morad.bat ──────────────────────────────────────────────────────
+
+R├┤le : D├®marre l'application tous les jours (serveurs + navigateur).
+
+Fonctionnement :
+  - Auto-d├®tection de l'IP r├®seau via PowerShell (Get-NetIPAddress)
+  - D├®marre uvicorn sur le port 8000 (FastAPI) avec --reload (auto-rechargement)
+  - D├®marre `php artisan serve` sur le port 8080 (Laravel)
+  - Ouvre le navigateur sur http://127.0.0.1:8080
+  - Affiche l'IP r├®seau pour que les autres PC du r├®seau puissent se connecter
+  - Quand on appuie sur une touche, tue les processus uvicorn et php
+
+Astuce : l'auto-d├®tection IP ├®vite ├  l'utilisateur de modifier le fichier .env
+├á chaque changement de r├®seau. C'est ce qu'on appelle de "l'ergonomie devops".
+
+──── 4.4 refresh_Excel_sqlite.bat ─────────────────────────────────────────────
+
+R├┤le : Synchronise les donn├®es Excel vers SQLite.
+
+Fonctionnement :
+  - D├®tecte Python (priorit├® au venv/ du projet)
+  - Ex├®cute backend/scripts/migrate_excel_to_sqlite.py
+  - Affiche le r├®sultat
+
+Ce script est utilis├® quand l'utilisateur modifie recap.xlsx (ajout d'employ├®,
+modification de dates) et veut mettre ├á jour l'interface.
+
+──── 4.5 reset_users.bat ───────────────────────────────────────────────────────
+
+R├┤le : R├®initialise les utilisateurs Laravel.
+
+Fonctionnement :
+  - Se place dans laravel/
+  - Ex├®cute php artisan migrate:fresh --seed
+  - `migrate:fresh` supprime toutes les tables et les recr├®e
+  - `--seed` ex├®cute DatabaseSeeder qui recr├®e les utilisateurs
+
+Utile quand on modifie DatabaseSeeder.php pour changer les identifiants.
+
+
+================================================================================
+5.  BACKEND PYTHON EN D├ëTAIL (TOUS LES FICHIERS .PY)
+================================================================================
+
+──── 5.1 core/config.py ────────────────────────────────────────────────────────
+Fichier : backend/core/config.py
+
+C'est le fichier le plus simple du projet (3 lignes). Il contient les chemins
+absolus vers les fichiers de donn├®es :
+
+    EXCEL_FILE  = "backend/data/recap.xlsx"
+    SQLITE_PATH = "backend/data/hr_database.db"
+
+Pourquoi un fichier de config s├®par├® ?
+  - Centralisation : si on d├®place recap.xlsx, on modifie UN SEUL fichier
+  - R├®utilisabilit├® : tous les autres .py importent ces constantes
+  - Principe DRY (Don't Repeat Yourself) : on ├®vite les "chemins en dur"
+
+──── 5.2 services/database.py ──────────────────────────────────────────────────
+Fichier : backend/services/database.py (209 lignes)
+
+C'est le fichier LE PLUS IMPORTANT du backend. Il contient TOUTE la logique
+m├®tier et l'acc├¿s aux donn├®es.
+
+Fonctions :
+
+a) get_connection() -> sqlite3.Connection
+   - Cr├®e une connexion ├á la base SQLite
+   - Cr├®e automatiquement le dossier backend/data/ s'il n'existe pas
+   - Active le mode WAL (Write-Ahead Logging) pour les performances
+   - Active les foreign keys (contrainte d'int├®grit├® r├®f├®rentielle)
+   - Configure row_factory = sqlite3.Row pour acc├®der aux colonnes par nom
+
+   Note technique : row_factory permet d'├®crire row["nom"] au lieu de row[1].
+   C'est plus lisible et moins fragile (si l'ordre des colonnes change).
+
+b) init_schema()
+   - Cr├®e les tables si elles n'existent pas (CREATE TABLE IF NOT EXISTS)
+   - Table "employees" : matricule (UNIQUE), nom, prenom, processus, uap, eap
+   - Table "pps_assignments" : employee_id (FK), pps_name, date_debut_validite,
+     statut, raw_value
+   - Cr├®e des indexes pour acc├®l├®rer les recherches (employee_id, statut, pps_name)
+
+   Pourquoi des indexes ? Sans index, une recherche sur 10 000 enregistrements
+   parcourt TOUTE la table (full scan). Avec l'index, c'est instantan├® (log(n)).
+
+c) get_all_employees() / get_employee_by_matricule() / get_employee_by_name()
+   Fonctions CRUD simples : SELECT avec ou sans filtre.
+
+d) get_pps_assignments(employee_id) / get_pps_by_name(pps_name)
+   R├®cup├©re les affectations PPS pour un employ├® ou un nom de PPS.
+
+e) get_all_distinct_pps_names()
+   Retourne la liste de tous les PPS distincts (pour les menus d├®roulants).
+
+f) build_employee_dataset() (la fonction la plus complexe)
+   C'est le c┼"ur du projet. Elle construit un "dataset" complet ├á partir des
+   deux tables (employees + pps_assignments).
+
+   Algorithme :
+   1. Pour chaque employ├® dans la table employees :
+   2.   R├®cup├¿re toutes ses affectations PPS
+   3.   Pour chaque affectation, lit le statut et classe le PPS dans la bonne
+        liste (valide / requalifier / prevu / suspendu / en_cours)
+   4.   Compte le nombre de PPS par statut
+   5.   Calcule 2 scores :
+        - strict_score : pourcentage de PPS valides parmi les PPS applicables
+        - operational_score : pourcentage (valides + requalifier + prevu)
+   6.   D├®termine le risque :
+        - "ALERTE" si au moins 1 PPS suspendu (danger)
+        - "SURVEILLANCE" si requalifier ou prevu (attention)
+        - "" sinon (vert)
+   7.   Retourne un dictionnaire complet pour chaque employ├®
+
+   Exemple de donn├®es retourn├®es pour un employ├® :
+   {
+     "matricule": "12345",
+     "name": "DUPONT Jean",
+     "valid": 5,           # 5 PPS valides
+     "requalify": 2,       # 2 ├á requalifier
+     "suspended": 1,       # 1 suspendu (ALERTE !)
+     "prevu": 0,
+     "en_cours": 1,
+     "valid_pps": ["PPS 001", "PPS 002", ...],
+     "suspended_pps_dates": [
+       {"pps": "PPS 012", "date": "2018-03-22"}
+     ],
+     "strict_score": 62.5, # 5/8 = 62.5%
+     "risk": "ALERTE"
+   }
+
+g) get_dataset_meta()
+   Retourne des m├®tadonn├®es sur le dataset : nombre d'employ├®s, nombre de
+   colonnes, distribution des statuts, ├®chantillon de donn├®es.
+
+   Utile pour les cartes stats du dashboard.
+
+──── 5.3 services/qualification_engine.py ──────────────────────────────────────
+Fichier : backend/services/qualification_engine.py (17 lignes)
+
+Petit fichier utilitaire pour la normalisation de texte.
+
+Fonction normalize_text(text) :
+  - Utilise unicodedata.normalize('NFKD', text) pour d├®composer les caract├¿res
+    accentu├®s (ex: "├®" devient "e" + combining accent)
+  - Encode en ASCII (ignore les caract├¿res non-ASCII)
+  - Passe en minuscules
+
+  Exemple : "M├®LANIE" -> "melanie"
+  Utile pour les recherches insensibles ├á la casse et aux accents.
+
+Les fonctions load_data() et get_dataset_meta() sont des wrappers qui appellent
+les fonctions de database.py. Cela permet d'isoler la couche service.
+
+──── 5.4 services/employee_service.py ──────────────────────────────────────────
+Fichier : backend/services/employee_service.py (16 lignes)
+
+Couche interm├®diaire entre les routes API et la couche m├®tier.
+
+Fonctions :
+  - get_meta_data() -> appelle database.get_dataset_meta()
+  - analyze_employees() -> appelle database.build_employee_dataset()
+
+Pourquoi une couche service ?
+  - S├®paration des responsabilit├®s : les routes ne font QUE de la r├®ception
+    de requ├¬tes HTTP, pas de logique m├®tier
+  - R├®utilisabilit├® : si on cr├®e un jour une interface CLI, on pourra
+    importer ce module sans passer par les routes
+  - Testabilit├® : on peut tester analyze_employees() sans d├®marrer le serveur
+
+──── 5.5 api/routes/employee.py ────────────────────────────────────────────────
+Fichier : backend/api/routes/employee.py (23 lignes)
+
+D├®finit les deux endpoints API REST pour les employ├®s.
+
+Routes :
+  GET /api/employee/meta    -> get_meta_data()   (m├®tadonn├®es)
+  GET /api/employee/analyze -> analyze_employees() (dataset complet)
+
+Aucune logique m├®tier ici. Juste des callbacks qui appellent les services.
+C'est le principe de la "Route = Contr├┤leur l├®ger" (Skinny Controller).
+
+──── 5.6 api/routes/health.py ──────────────────────────────────────────────────
+Fichier : backend/api/routes/health.py (11 lignes)
+
+Route simple : GET /health -> { "status": "ok" }
+
+Utile pour :
+  - V├®rifier que le serveur tourne (monitoring)
+  - Les load balancers v├®rifient souvent ce genre d'endpoint
+  - D├®bogage rapide
+
+──── 5.7 main.py ───────────────────────────────────────────────────────────────
+Fichier : backend/main.py (28 lignes)
+
+Point d'entr├®e de l'application FastAPI. C'est le fichier que uvicorn ex├®cute.
+
+Composants :
+  1. Cr├®ation de l'application FastAPI (app = FastAPI(title="Assistant"))
+  2. Middleware CORS (Cross-Origin Resource Sharing)
+     - Permet aux requ├¬tes depuis n'importe quel domaine (allow_origins=["*"])
+     - N├®cessaire car Laravel tourne sur un port diff├®rent (8080) de FastAPI (8000)
+     - En production, on restreindrait aux domaines autoris├®s
+  3. Inclusion des routers (employee_router, health_router)
+     - L'ordre compte ! Les routes API sont enregistr├®es avant le mount static
+  4. Mount du dossier "frontend/" comme fichiers statiques (optionnel)
+     - Utile si on veut servir un frontend pure HTML/JS c├┤t├® FastAPI
+     - Dans notre cas, c'est Laravel qui fait le frontend
+
+Pourquoi CORS est important ?
+  Imagine : ton navigateur charge la page depuis http://127.0.0.1:8080 (Laravel).
+  Cette page fait une requ├¬te fetch() vers http://127.0.0.1:8000 (FastAPI).
+  Sans CORS, le navigateur bloque la requ├¬te pour des raisons de s├®curit├®.
+  Le middleware CORS ajoute l'en-t├¬te Access-Control-Allow-Origin pour l'autoriser.
+
+──── 5.8 scripts/migrate_excel_to_sqlite.py ────────────────────────────────────
+Fichier : backend/scripts/migrate_excel_to_sqlite.py (122 lignes)
+
+Script de migration qui transforme le fichier Excel en base SQLite. C'est le
+deuxi├¿me fichier le plus important du backend.
+
+Algorithme complet :
+  1. Lecture du fichier Excel avec pandas.read_excel()
+  2. D├®tection automatique des colonnes de dates :
+     - Cherche toutes les colonnes dont le nom commence par "Date"
+     - La colonne suivante est le nom du PPS correspondant
+     - Exemple : colonne "Date PPS 001" -> colonne suivante = "PPS 001"
+  3. Pour chaque ligne (employ├®) :
+     a. Extrait le matricule, nom, pr├®nom, processus, UAP, EAP
+     b. Ins├¿re l'employ├® dans la table employees (INSERT OR IGNORE)
+     c. Pour chaque paire (Date, PPS) :
+        - Lit la date et la valeur du PPS
+        - Calcule le statut avec compute_statut(date, valeur_pps)
+        - Si la valeur contient "EC", le statut devient "en_cours"
+        - Ins├¿re l'affectation dans pps_assignments
+  4. Affiche les statistiques : employ├®s ins├®r├®s, affectations cr├®├®es, en_cours
+
+La fonction compute_statut() est le c┼"ur de la r├¿gle m├®tier :
+
+    def compute_statut(date_val, pps_val):
+        si pas de date :
+            si pps_val contient "EC" -> retourne "en_cours"
+            sinon -> retourne "non_applicable"
+        sinon :
+            diff = (aujourd'hui - date) en ann├®es
+            si diff > 3 ans     -> "suspendu"   # Certif trop vieille
+            si diff >= 2.9589   -> "prevu"      # Dans les 15 jours
+            si diff >= 2.75     -> "a_requalifier" # 3 mois avant ├®ch├®ance
+            si diff < 2.75      -> "valide"     # Tout va bien
+
+  Le seuil PREVU_THRESHOLD = 2.9589 ans correspond ├á 2 ans + 11 mois
+  (2 + 11/12 = 2.9167, mais 2.9589 ≈ 2 ans + 350 jours, soit ~15 jours avant 3 ans)
+
+  2.75 ans = 2 ans + 9 mois (d├®but de la p├®riode de requalification)
+
+Noter que `raw_value` stocke la valeur EXACTE de l'Excel (ex: "VALIDE", "EC")
+pour permettre les rapports d'incoh├®rence (quand l'Excel dit "VALIDE" mais la
+date indique une expiration).
+
+
+================================================================================
+6.  FRONTEND LARAVEL EN D├ëTAIL
+================================================================================
+
+──── 6.1 Routes (web.php) ──────────────────────────────────────────────────────
+Fichier : laravel/routes/web.php
+
+D├®finit le point d'entr├®e de toutes les requ├¬tes HTTP c├┤t├® Laravel.
+
+Routes :
+  GET  /login          -> AuthController@loginForm  (page de connexion)
+  POST /login          -> AuthController@login      (traitement connexion)
+  POST /logout         -> AuthController@logout     (d├®connexion)
+
+  Groupes prot├®g├®s par middleware :
+  - Route::middleware(['auth', 'role:admin']) :
+      GET /              -> NexusController@dashboard  (admin only)
+      GET /pps           -> NexusController@pps        (admin only)
+  - Route::middleware(['auth', 'role:admin,employee']) :
+      GET /employees          -> NexusController@employees       (admin + employee)
+      GET /employees/{matricule} -> NexusController@employeeDetail (admin + employee)
+
+Noter : les employ├®s voient la liste des employ├®s mais PAS le dashboard ni la
+page PPS. C'est une restriction logique : un employ├® ne voit que les donn├®es
+collectives, pas les m├®triques de gestion.
+
+──── 6.2 Controllers ──────────────────────────────────────────────────────────
+
+A) AuthController.php (39 lignes)
+
+G├¿re l'authentification :
+  - loginForm() : affiche la vue auth.login
+  - login(Request) :
+    1. Valide les donn├®es (name requis, password requis)
+    2. Appelle Auth::attempt($credentials) (syst├¿me d'auth int├®gr├® Laravel)
+    3. Si OK : r├®g├®n├©re la session + redirige (admin -> /, employee -> /employees)
+    4. Si KO : retourne au formulaire avec erreur "Identifiants incorrects."
+  - logout() : d├®connecte, invalide la session, redirige vers /login
+
+B) NexusController.php (98 lignes)
+
+Contr├┤leur principal qui fait le pont entre Laravel et FastAPI via HTTP.
+
+  1. dashboard()
+     - Appelle /api/employee/meta et /api/employee/analyze via HTTP GET
+     - Agr├¿ge les donn├®es : comptage des PPS par statut, comptage des risques
+     - Envoie le tout ├á la vue pages.dashboard
+
+  2. employees()
+     - Appelle /api/employee/analyze
+     - Filtre les employ├®s non qualifi├®s (0 partout)
+     - Envoie le tout ├á la vue pages.employees
+
+  3. employeeDetail($matricule)
+     - Appelle /api/employee/analyze
+     - Cherche l'employ├® par matricule (firstWhere)
+     - 404 si introuvable
+     - Envoie ├á la vue pages.employee
+
+  4. pps()
+     - Appelle /api/employee/analyze
+     - Agr├¿ge les PPS : pour chaque PPS, compte les employ├®s par statut
+     - Trie par nom de PPS
+     - Cr├®e un classement par nombre de valides (pour le graphique horizontal)
+     - Envoie ├á la vue pages.pps
+
+Noter l'utilisation de Http::get() (facade HTTP de Laravel) pour communiquer
+avec FastAPI. L'URL de base est d├®finie dans .env : FASTAPI_URL.
+
+──── 6.3 Middleware CheckRole.php ──────────────────────────────────────────────
+Fichier : laravel/app/Http/Middleware/CheckRole.php (24 lignes)
+
+Middleware de s├®curit├® qui v├®rifie le r├┤le de l'utilisateur avant d'autoriser
+l'acc├¿s ├á une route.
+
+Fonctionnement :
+  1. V├®rifie si l'utilisateur est connect├® (Auth::check())
+  2. Si non : redirige vers /login
+  3. Si oui : compare le r├┤le de l'utilisateur avec les r├┤les autoris├®s
+  4. Si match : autorise la requ├¬te ($next($request))
+  5. Sinon : 403 Acc├¿s non autoris├®
+
+C'est utilis├® dans web.php : middleware(['auth', 'role:admin']) ou
+middleware(['auth', 'role:admin,employee']).
+
+──── 6.4 Models/User.php ──────────────────────────────────────────────────────
+Fichier : laravel/app/Models/User.php (37 lignes)
+
+Le mod├¿le Utilisateur Laravel. Propri├®t├®s :
+  - Fillable : name, email, password, role
+  - Hidden (ne jamais exposer en JSON) : password, remember_token
+  - cast password en "hashed" (Laravel hache automatiquement)
+  - M├®thodes isAdmin() et isEmployee() pour les v├®rifications de r├┤le
+
+Les attributs PHP 8 (attributes) :
+  #[Fillable[...]] et #[Hidden[...]] sont les nouveaux attributs natifs
+  de PHP 8 qui remplacent les propri├®t├®s $fillable et $hidden.
+
+──── 6.5 DatabaseSeeder.php ────────────────────────────────────────────────────
+Fichier : laravel/database/seeders/DatabaseSeeder.php (25 lignes)
+
+Cr├®e les 2 utilisateurs par d├®faut :
+  - name='ADMIN',  email='admin@assistant.com',  password='MK2026', role='admin'
+  - name='MKTANGER', email='employee@assistant.com', password='MK2026', role='employee'
+
+Pour modifier les identifiants, on ├®dite ce fichier puis on lance
+reset_users.bat (qui fait migrate:fresh --seed).
+
+──── 6.6 Les Vues Blade ───────────────────────────────────────────────────────
+
+A) layouts/app.blade.php (le layout g├®n├®ral)
+   - Th├¿me dark cyberpunk (#0F1117, neon cyan #00FFFF)
+   - Sidebar responsive (hamburger menu sur mobile)
+   - Barre de navigation avec liens (Dashboard, Employ├®s, PPS)
+   - Affichage conditionnel : admin voit tout, employee voit seulement Employ├®s
+   - Bouton D├®connexion
+   - Inclusion de Tailwind CSS + Chart.js + Google Fonts (Inter)
+   - Template avec @yield('content') et @stack('scripts')
+
+B) auth/login.blade.php
+   - Page de connexion minimaliste
+   - Champs : nom d'utilisateur, mot de passe
+   - Gestion des erreurs (affichage conditionnel)
+   - Design centr├®, carte 1a1f2e avec bordure cyan
+
+C) pages/dashboard.blade.php (admin only)
+   - 5 cartes statistiques (valides, requalifier, prevu, en_cours, suspendus)
+   - Graphique donut Chart.js de distribution des PPS
+   - Section Alertes (ex-risques) : employ├®s suspendus
+   - R├®sum├® du jeu de donn├®es (nombre d'employ├®s, colonnes)
+   - Tableau des employ├®s avec PPS suspendus
+   - Tableau des PPS avec comptes par statut
+   - Les dates sont format├®es en jj/mm/aaaa
+
+D) pages/employees.blade.php
+   - Barre de recherche (filtre par nom/matricule c├┤t├® client en JS)
+   - Deux onglets : "Tous" et "Non qualifi├®s" (admin seulement)
+   - Tableau avec colonnes : Matricule, Nom, Processus, UAP, Alerte, Valides,
+     Requalifier, En cours, Suspendus
+   - Badges de risque (ALERTE rouge, SURVEILLANCE orange)
+   - Lien vers le d├®tail de chaque employ├®
+
+E) pages/employee.blade.php
+   - D├®tail d'un employ├® avec :
+   - En-t├¬te (nom, matricule, processus, UAP)
+   - Badge de risque (ALERTE / SURVEILLANCE)
+   - 5 cartes de comptage PPS
+   - Sections par statut (suspendus, requalifier, prevu, en_cours, valides)
+   - Chaque section montre les PPS concern├®s avec dates le cas ├®ch├®ant
+
+F) pages/pps.blade.php (admin only, la vue la plus complexe)
+   - 3 onglets : Graphiques, Liste PPS, Classement
+   - Graphique donut + barres Chart.js interactifs
+   - Clic sur un segment du donut/barre -> filtre les PPS par statut
+   - D├®tail d'un PPS : clic sur un nom -> affiche les stats et les employ├®s
+   - Recherche de PPS
+   - Classement horizontal des PPS par nombre de valides
+   - Interaction riche avec JavaScript
+
+
+================================================================================
+7.  LOGIQUE M├ëTIER : LE CALCUL DES STATUTS PPS
+================================================================================
+
+C'est la partie la plus importante du projet ├á comprendre.
+
+Le fichier recap.xlsx contient pour chaque employ├® :
+  - Ses infos : matricule, nom, pr├®nom, processus, uap, eap
+  - Des colonnes de dates : "Date PPS XXX" avec la date de validation
+  - Des colonnes de PPS : le nom du PPS, parfois avec "VALIDE" ou "EC"
+
+Le calcul du statut se fait dans compute_statut() (migrate_excel_to_sqlite.py) :
+
+    ├ëtat 1 : Pas de date du tout
+        -> Regarder la colonne PPS
+        -> Si elle contient "EC" (En Cours) : statut = "en_cours"
+        -> Sinon : statut = "non_applicable" (jamais pass├®)
+
+    ├ëtat 2 : Date pr├®sente
+        -> Calculer diff = (aujourd'hui - date) en ann├®es
+        -> Exemples concrets :
+
+           Date PPS        ├ége      Statut
+           2025-06-20    0 an       valide      (< 2.75 ans)
+           2023-09-21    2.75 ans   a_requalifier (>= 2.75)
+           2023-07-22    2.92 ans   prevu        (>= 2.9589)
+           2022-06-20    3 ans      suspendu     (> 3 ans)
+           2018-03-22    8 ans      suspendu     (> 3 ans)
+
+POURQUOI CES SEUILS ?
+  - 3 ans = dur├®e de validit├® d'un PPS
+  - 2.9589 = 3 ans - 15 jours (p├®riode de "pr├®vu" avant ├®ch├®ance)
+  - 2.75 = 3 ans - 3 mois (d├®but de la p├®riode de requalification)
+
+Si une case Excel dit "VALIDE" mais que la date est > 3 ans, l'application
+cr├®e une incoh├®rence (enregistr├®e dans rapport_correction_pps.txt).
+C'est le cas des 52 incoh├®rences d├®tect├®es : l'Excel dit "VALIDE" mais le
+calcul automatique dit "suspendu" ou "a_requalifier".
+
+
+================================================================================
+8.  CYCLE DE VIE COMPLET DES DONN├ëES
+================================================================================
+
+├ëtape 1 : L'utilisateur modifie recap.xlsx (Excel)
+    - Ajoute/modifie des employ├®s
+    - Met ├á jour les dates de PPS
+    - (Les modifications sont manuelles)
+
+├ëtape 2 : Lancer refresh_Excel_sqlite.bat
+    - Python lit recap.xlsx avec pandas
+    - Pour chaque ligne, calcule les statuts avec compute_statut()
+    - Vide les tables existantes (DELETE FROM)
+    - R├®ins├¿re toutes les donn├®es dans SQLite
+    - Le fichier hr_database.db est mis ├á jour
+
+├ëtape 3 : Lancer lancer_morad.bat
+    - D├®marre FastAPI (uvicorn) sur le port 8000
+    - D├®marre Laravel (php artisan serve) sur le port 8080
+
+├ëtape 4 : L'utilisateur ouvre le navigateur
+    - Laravel re├ºoit la requ├¬te (ex: GET /)
+    - NexusController appelle FastAPI : GET http://localhost:8000/api/employee/analyze
+    - FastAPI interroge SQLite, construit le dataset, retourne du JSON
+    - Laravel re├ºoit le JSON, l'agr├¿ge, et le passe ├á la vue Blade
+    - Blade g├®n├¿re le HTML, envoy├® au navigateur
+    - Chart.js dessine les graphiques dans le navigateur
+
+Cycle complet en sch├®ma :
+
+    Excel (.xlsx)
+       │
+       ▼  (refresh_Excel_sqlite.bat)
+    migrate_excel_to_sqlite.py
+       │
+       ▼
+    SQLite (hr_database.db)
+       │
+       ▼  (FastAPI d├®marr├®)
+    GET /api/employee/analyze
+       │
+       ▼
+    build_employee_dataset()
+       │
+       ▼
+    JSON response
+       │
+       ▼  (Laravel d├®marr├®)
+    NexusController -> Http::get()
+       │
+       ▼
+    Vue Blade
+       │
+       ▼
+    HTML + Chart.js -> Navigateur
+
+La magie de cette architecture : chaque ├®tape est ind├®pendante.
+  - On peut modifier l'Excel sans toucher au code
+  - On peut modifier les vues sans toucher ├á l'API
+  - On peut remplacer SQLite par PostgreSQL sans changer le frontend
+
+
+================================================================================
+9.  CONCEPTS CL├ëS ├Ç RETENIR
+================================================================================
+
+1. Architecture d├®coupl├®e
+   - Frontend (Laravel) ne conna├«t pas la base de donn├®es
+   - Backend (FastAPI) ne conna├«t pas le rendu HTML
+   - Ils communiquent via HTTP/JSON
+   - Avantage : on peut remplacer chaque couche ind├®pendamment
+
+2. Principe de responsabilit├® unique
+   - Chaque fichier a UN r├┤le pr├®cis
+   - config.py : configuration
+   - database.py : acc├¿s aux donn├®es
+   - employee_service.py : orchestration
+   - employee.py (routes) : endpoints HTTP
+   - main.py : point d'entr├®e
+
+3. R├¿gles m├®tier vs donn├®es brutes
+   - Les donn├®es Excel sont brutes (dates + valeurs libres)
+   - La fonction compute_statut() applique des r├¿gles strictes
+   - Les incoh├®rences sont conserv├®es (raw_value garde la valeur Excel)
+   - Cela permet des rapports d'audit (52 incoh├®rences d├®tect├®es)
+
+4. S├®curit├®
+   - Authentification requise pour toutes les pages (sauf login)
+   - Middleware de r├┤le (admin vs employee)
+   - Les mots de passe sont hash├®s par Laravel
+   - Les sessions sont g├®r├®es par Laravel (regenerate, invalidate)
+   - CORS configur├® pour autoriser uniquement ce qu'il faut
+
+5. D├®ploiement 1-clic
+   - Scripts batch qui automatisent toute l'installation
+   - Auto-d├®tection IP r├®seau
+   - Aucune configuration manuelle n├®cessaire
+   - L'utilisateur n'a pas besoin de conna├«tre PHP, Python ou les bases
+
+6. Maintenabilit├®
+   - Un fichier .env pour la configuration (URL FastAPI, connexion DB)
+   - Des indexes SQLite pour les performances
+   - Des commentaires dans les parties complexes
+   - Des noms de variables explicites (statut, matricule, pps_name)
+
+7. Ce qu'il faut retenir pour reproduire ce projet :
+   a) D├®finir les r├¿gles m├®tier (compute_statut) AVANT d'├®crire le code
+   b) Choisir les bons outils : pandas pour Excel, FastAPI pour l'API,
+      Laravel pour le front, SQLite pour la simplicit├®
+   c) S├®parer les couches : donn├®es -> service -> API -> frontend
+   d) Automatiser le d├®ploiement avec des scripts batch
+   e) Pr├®voir la gestion des incoh├®rences (rapports)
+   f) Tester avec un fichier Excel r├®el avant de d├®velopper les vues
+
+
+================================================================================
+FIN DU DOCUMENT
+R├®dig├® comme support p├®dagogique pour comprendre l'architecture et la logique
+du projet Assistant PPS.
+================================================================================

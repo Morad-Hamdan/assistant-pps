@@ -1,0 +1,77 @@
+# ==============================================================================
+#  Assistant PPS — .gitignore
+#  Protège les secrets, les données RH et les dépendances re-générables.
+# ==============================================================================
+
+# ---------- Environnements virtuels ----------
+venv/
+.venv/
+env/
+ENV/
+
+# ---------- Dépendances Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ---------- Dépendances PHP / Laravel ----------
+ai_assistant/laravel/vendor/
+Assistant_PPS_App/laravel/vendor/
+node_modules/
+npm-debug.log
+yarn-error.log
+.pnp/
+.pnp.js
+
+# ---------- Fichiers d'environnement (SECRETS) ----------
+# Jamais poussé publiquement — utiliser .env.example à la place.
+.env
+.env.*
+!.env.example
+
+# ---------- Bases de données générées ----------
+*.db
+*.sqlite
+*.sqlite3
+storage/*.key
+storage/logs/*.log
+ai_assistant/laravel/storage/logs/*.log
+Assistant_PPS_App/laravel/storage/logs/*.log
+
+# ---------- Données RH (CONFIDENTIELLES) ----------
+# recap.xlsx contient des données personnelles d'employés : ne jamais publier.
+recap.xlsx
+*.xlsx
+!**/recap.example.xlsx
+
+# ---------- Rapports d'audit générés ----------
+rapport_correction_pps.md
+rapport_correction_pps.txt
+
+# ---------- OS / Éditeurs ----------
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# ---------- Logs ----------
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
