@@ -37,6 +37,10 @@ yarn-error.log
 .env
 .env.*
 !.env.example
+# Modèle de configuration SANS SECRET embarqué dans le conteneur Docker
+# (copié en .env au démarrage par docker-entrypoint.sh). Nécessaire au
+# build : il est exclu de l'image par .dockerignore.
+!.env.docker
 
 # ---------- Bases de données générées ----------
 *.db

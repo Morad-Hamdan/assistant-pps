@@ -1,0 +1,57 @@
+# Exclusions du contexte de construction Docker (Assistant PPS).
+#
+# Point de construction : la racine du depot (le Dockerfile y est place
+# afin d'etre detecte automatiquement par les hebergeurs).
+#   docker build -t assistant-pps .
+
+.git
+.gitignore
+
+# --- secrets --------------------------------------------------------------
+# Jamais dans l'image. Le conteneur part de laravel/.env.docker et genere
+# sa propre cle au premier demarrage.
+.env
+**/.env
+!**/.env.example
+!**/.env.docker
+
+# --- paquets construits sous Windows --------------------------------------
+# Copier un vendor/ Windows dans une image Linux produirait des binaires
+# inutilisables : composer les reconstruit pendant la construction.
+**/vendor
+**/node_modules
+
+# --- donnees reelles, jamais publiquees -----------------------------------
+# recap.xlsx (100 Ko) et hr_database.db (1,3 Mo) contiennent de vraies
+# donnees RH. Le conteneur fabrique un jeu fictif au demarrage.
+**/backend/data/*.xlsx
+**/backend/data/*.db
+**/backend/data/*.sqlite
+**/backend/data/*.md
+**/backend/data/*.txt
+
+laravel/database/*.sqlite
+laravel/database/*.db
+
+# --- la copie de reference n'est pas deploiee ------------------------------
+# Assistant_PPS_App est un doublon inutilise (le lanceur utilise
+# ai_assistant/). Construire les deux doublerait le temps de build.
+Assistant_PPS_App
+
+# --- sorties, caches, environnements --------------------------------------
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/storage/logs/*
+**/storage/framework/cache/data/*
+**/storage/framework/sessions/*
+**/storage/framework/views/*
+laravel/bootstrap/cache/*.php
+*.zip
+venv
+.venv
+env
+.idea
+.vscode
+Thumbs.db
+.DS_Store

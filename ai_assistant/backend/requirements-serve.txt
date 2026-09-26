@@ -1,0 +1,17 @@
+# Dependances strictement necessaires pour SERVIR l'API FastAPI.
+#
+# scripts/requirements.txt (le fichier complet) sert au developpement et a
+# la migration Excel -> SQLite. Ce fichier restreint est celui utilise par
+# le conteneur de demonstration, car :
+#
+#   * la migration n'a pas besoin de tourner en ligne (recap.xlsx, qui
+#     contient de vraies donnees RH, n'est jamais present dans l'image) ;
+#   * pandas + numpy representent l'essentiel du poids et du temps de
+#     construction, pour un gain nul a l'execution ;
+#   * aucun import de pandas/numpy n'est charge au demarrage du serveur.
+#
+# Conservation des versions exactes de scripts/requirements.txt.
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
